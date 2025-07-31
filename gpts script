@@ -1,0 +1,404 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
+local Lighting = game:GetService("Lighting")
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+-- Настройки
+local Settings = {
+    Keybind = Enum.KeyCode.E,
+    BoostKeybind = Enum.KeyCode.V,
+    TargetPart = "HumanoidRootPart",
+    LockAngleAtTarget = true,
+    
+    -- Настройки предсказания
+    UsePrediction = true,
+    Prediction = 0.17362,
+    JumpOffset = 1.5,
+    
+    -- Настройки BoostToTarget
+    BoostSpeed = 500,         -- Скорость буста (юнитов/сек)
+    MaxBoostDistance = 10000, -- Максимальная дистанция буста
+    BoostCooldown = 0,        -- КД между бустами
+    StopDistance = 0,       -- Дистанция остановки перед целью
+    
+    -- Визуализация
+    PredictionColor = Color3.fromRGB(0, 255, 0),
+    PredictionSize = UDim2.new(0, 20, 0, 20), -- Размер для BillboardGui
+    PredictionTransparency = 0.5,
+    
+    -- Фильтры
+    MaxDistance = 1000,
+    FOV = 60,
+    TargetNPCs = true,
+    TargetPlayers = true
+}
+
+-- Состояние
+local State = {
+    SelectedTarget = nil,
+    PredictionGui = nil,
+    OriginalAutoRotate = true,
+    Connections = {},
+    IsBoosting = false,
+    LastBoostTime = 0,
+    FixedBoostPosition = nil -- Фиксированная позиция для буста
+}
+
+-- Создаем визуальные элементы (BillboardGui вместо Part)
+local function CreateVisuals()
+    State.PredictionGui = Instance.new("BillboardGui")
+    State.PredictionGui.Name = "PredictionVisual"
+    State.PredictionGui.Size = Settings.PredictionSize
+    State.PredictionGui.AlwaysOnTop = true
+    State.PredictionGui.Enabled = false
+    
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, 0, 1, 0)
+    frame.BackgroundColor3 = Settings.PredictionColor
+    frame.BackgroundTransparency = Settings.PredictionTransparency
+    frame.BorderSizePixel = 0
+    frame.Parent = State.PredictionGui
+    
+    -- Круглая форма
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(1, 0)
+    corner.Parent = frame
+    
+    State.PredictionGui.Parent = Workspace
+end
+
+-- Очищаем визуальные элементы
+local function ClearVisuals()
+    if State.PredictionGui then
+        State.PredictionGui:Destroy()
+        State.PredictionGui = nil
+    end
+end
+
+-- Управление autorotate
+local function ManageAutoRotate(enable)
+    local character = LocalPlayer.Character
+    if not character then return end
+    
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+    
+    if enable then
+        humanoid.AutoRotate = State.OriginalAutoRotate
+    else
+        State.OriginalAutoRotate = humanoid.AutoRotate
+        humanoid.AutoRotate = false
+    end
+end
+
+-- Рассчитываем velocity цели
+local function CalculateVelocity(target)
+    if not target or not target:FindFirstChild(Settings.TargetPart) then return Vector3.new() end
+    return target[Settings.TargetPart].Velocity
+end
+
+-- Находим ближайшую цель к курсору
+local function FindClosestTargetToCursor()
+    local closestTarget = nil
+    local closestDistance = math.huge
+    local mousePos = UserInputService:GetMouseLocation()
+    local mouseRay = Camera:ViewportPointToRay(mousePos.X, mousePos.Y)
+    
+    -- Проверяем NPC
+    if Settings.TargetNPCs then
+        for _, npc in pairs(Workspace.Live:GetChildren()) do
+            if not Players:GetPlayerFromCharacter(npc) and npc:FindFirstChild(Settings.TargetPart) then
+                local npcPart = npc[Settings.TargetPart]
+                local npcPos = npcPart.Position
+                local screenPos, onScreen = Camera:WorldToViewportPoint(npcPos)
+                
+                if onScreen then
+                    local screenDistance = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+                    local cameraLook = mouseRay.Direction
+                    local toNPC = (npcPos - mouseRay.Origin).Unit
+                    local angle = math.deg(math.acos(cameraLook:Dot(toNPC)))
+                    
+                    if angle <= Settings.FOV and screenDistance < closestDistance then
+                        local distance = (mouseRay.Origin - npcPos).Magnitude
+                        if distance <= Settings.MaxDistance then
+                            closestTarget = npc
+                            closestDistance = screenDistance
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    -- Проверяем игроков (кроме локального)
+    if Settings.TargetPlayers then
+        for _, player in pairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character and player.Character:FindFirstChild(Settings.TargetPart) then
+                local charPart = player.Character[Settings.TargetPart]
+                local charPos = charPart.Position
+                local screenPos, onScreen = Camera:WorldToViewportPoint(charPos)
+                
+                if onScreen then
+                    local screenDistance = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+                    local cameraLook = mouseRay.Direction
+                    local toChar = (charPos - mouseRay.Origin).Unit
+                    local angle = math.deg(math.acos(cameraLook:Dot(toChar)))
+                    
+                    if angle <= Settings.FOV and screenDistance < closestDistance then
+                        local distance = (mouseRay.Origin - charPos).Magnitude
+                        if distance <= Settings.MaxDistance then
+                            closestTarget = player.Character
+                            closestDistance = screenDistance
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    return closestTarget
+end
+
+-- Рассчитываем предсказанную позицию
+local function CalculatePrediction(target)
+    if not target or not target:FindFirstChild(Settings.TargetPart) then return nil end
+    
+    local targetPart = target[Settings.TargetPart]
+    local targetPos = targetPart.Position
+    local targetVel = CalculateVelocity(target)
+    
+    local predictedPos = targetPos
+    if Settings.UsePrediction then
+        predictedPos = targetPos + (targetVel * Settings.Prediction)
+        if targetVel.Y > 15 then
+            predictedPos = predictedPos + Vector3.new(0, Settings.JumpOffset, 0)
+        end
+    end
+    
+    return predictedPos
+end
+
+-- Функция быстрого перемещения к цели с использованием CFrame
+local function BoostToTarget()
+    if State.IsBoosting or (tick() - State.LastBoostTime) < Settings.BoostCooldown then return end
+    if not State.SelectedTarget or not State.SelectedTarget:FindFirstChild(Settings.TargetPart) then return end
+    
+    local character = LocalPlayer.Character
+    if not character then return end
+    
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return end
+    
+    -- Фиксируем позицию для буста (не обновляется во время движения)
+    State.FixedBoostPosition = CalculatePrediction(State.SelectedTarget)
+    if not State.FixedBoostPosition then return end
+    
+    local distance = (rootPart.Position - State.FixedBoostPosition).Magnitude
+    if distance > Settings.MaxBoostDistance then
+        State.FixedBoostPosition = rootPart.Position + (State.FixedBoostPosition - rootPart.Position).Unit * Settings.MaxBoostDistance
+    end
+    
+    State.IsBoosting = true
+    State.LastBoostTime = tick()
+    
+    -- Визуальный эффект
+    local boostEffect = Instance.new("Part")
+    boostEffect.Size = Vector3.new(5, 5, 5)
+    boostEffect.Shape = Enum.PartType.Ball
+    boostEffect.Material = Enum.Material.Neon
+    boostEffect.Color = Color3.fromRGB(0, 150, 255)
+    boostEffect.Transparency = 0.7
+    boostEffect.Anchored = true
+    boostEffect.CanCollide = false
+    boostEffect.Position = rootPart.Position
+    boostEffect.Parent = Workspace
+    
+    game:GetService("Debris"):AddItem(boostEffect, 0.5)
+    
+    -- Сохраняем оригинальные свойства
+    local originalGravity = workspace.Gravity
+    local originalVelocity = rootPart.Velocity
+    
+    -- Временно изменяем гравитацию
+    workspace.Gravity = 0
+    rootPart.Velocity = Vector3.new()
+    
+    -- Направление движения
+    local direction = (State.FixedBoostPosition - rootPart.Position).Unit
+    local targetCFrame = CFrame.new(rootPart.Position, rootPart.Position + direction)
+    
+    -- Рассчитываем время движения
+    local travelDistance = math.min((rootPart.Position - State.FixedBoostPosition).Magnitude - Settings.StopDistance, Settings.MaxBoostDistance)
+    if travelDistance <= 0 then 
+        State.IsBoosting = false
+        workspace.Gravity = originalGravity
+        return 
+    end
+    
+    local travelTime = travelDistance / Settings.BoostSpeed
+    
+    -- Анимация движения (очень быстрое)
+    local startTime = tick()
+    local startPos = rootPart.Position
+    local endPos = startPos + direction * travelDistance
+    
+    local boostConnection
+    boostConnection = RunService.Heartbeat:Connect(function(dt)
+        if not State.SelectedTarget or not State.SelectedTarget:FindFirstChild(Settings.TargetPart) then
+            State.IsBoosting = false
+            workspace.Gravity = originalGravity
+            boostConnection:Disconnect()
+            return
+        end
+        
+        local elapsed = tick() - startTime
+        local progress = math.min(elapsed / travelTime, 1)
+        
+        -- Быстрое движение с небольшим замедлением в конце
+        local smoothProgress = progress < 0.8 and progress * 1.25 or 0.8 + (progress - 0.8) * 0.2
+        
+        -- Новые координаты
+        local newPos = startPos + direction * travelDistance * smoothProgress
+        local newCFrame = CFrame.new(newPos, newPos + direction)
+        
+        -- Применяем движение
+        rootPart.CFrame = newCFrame
+        boostEffect.Position = newPos
+        
+        -- Проверяем завершение
+        if progress >= 1 then
+            State.IsBoosting = false
+            workspace.Gravity = originalGravity
+            boostConnection:Disconnect()
+        end
+    end)
+end
+
+-- Функция поворота персонажа к цели
+local function LookAtTarget()
+    if not Settings.LockAngleAtTarget or not State.SelectedTarget then 
+        ManageAutoRotate(true)
+        return 
+    end
+    
+    local character = LocalPlayer.Character
+    if not character then return end
+    
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return end
+    
+    local predictedPos = CalculatePrediction(State.SelectedTarget)
+    if not predictedPos then return end
+    
+    ManageAutoRotate(false)
+    
+    local localPos = rootPart.Position
+    local aimDirection = (predictedPos - localPos).Unit
+    aimDirection = Vector3.new(aimDirection.X, 0, aimDirection.Z).Unit
+    
+    rootPart.CFrame = CFrame.new(localPos, localPos + aimDirection)
+end
+
+-- Выбираем или снимаем цель
+local function ToggleTarget()
+    if State.SelectedTarget then
+        State.SelectedTarget = nil
+        if State.PredictionGui then
+            State.PredictionGui.Enabled = false
+        end
+        ManageAutoRotate(true)
+    else
+        State.SelectedTarget = FindClosestTargetToCursor()
+    end
+end
+
+-- Основной цикл обновления
+local function UpdateVisuals()
+    if not State.SelectedTarget or not State.SelectedTarget:FindFirstChild(Settings.TargetPart) then
+        if State.PredictionGui then
+            State.PredictionGui.Enabled = false
+        end
+        ManageAutoRotate(true)
+        return
+    end
+    
+    local predictedPos = CalculatePrediction(State.SelectedTarget)
+    if not predictedPos then return end
+    
+    if State.PredictionGui then
+        State.PredictionGui.Adornee = State.SelectedTarget[Settings.TargetPart]
+        State.PredictionGui.Enabled = true
+        State.PredictionGui.StudsOffset = (predictedPos - State.SelectedTarget[Settings.TargetPart].Position) * 1.5 -- Увеличиваем смещение для лучшей видимости
+    end
+    
+    LookAtTarget()
+end
+
+-- Инициализация
+local function Init()
+    CreateVisuals()
+    
+    table.insert(State.Connections, UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        if not gameProcessed then
+            if input.KeyCode == Settings.Keybind then
+                ToggleTarget()
+            elseif input.KeyCode == Settings.BoostKeybind then
+                BoostToTarget()
+            end
+        end
+    end))
+    
+    table.insert(State.Connections, RunService.RenderStepped:Connect(function()
+        UpdateVisuals()
+    end))
+    
+    table.insert(State.Connections, Workspace.ChildRemoved:Connect(function(child)
+        if child == State.SelectedTarget then
+            State.SelectedTarget = nil
+            ManageAutoRotate(true)
+        end
+    end))
+    
+    table.insert(State.Connections, LocalPlayer.CharacterRemoving:Connect(function()
+        ManageAutoRotate(true)
+    end))
+end
+
+-- Очистка
+local function Cleanup()
+    for _, conn in pairs(State.Connections) do
+        conn:Disconnect()
+    end
+    State.Connections = {}
+    
+    ManageAutoRotate(true)
+    ClearVisuals()
+end
+
+-- Запускаем скрипт
+Init()
+
+-- Возвращаем функции для управления
+return {
+    SetTarget = function(target) 
+        State.SelectedTarget = target 
+    end,
+    GetCurrentTarget = function() return State.SelectedTarget end,
+    UpdateSettings = function(newSettings)
+        for key, value in pairs(newSettings) do
+            if Settings[key] ~= nil then
+                Settings[key] = value
+            end
+        end
+        
+        if State.PredictionGui then
+            State.PredictionGui.Size = Settings.PredictionSize
+            State.PredictionGui.Frame.BackgroundColor3 = Settings.PredictionColor
+            State.PredictionGui.Frame.BackgroundTransparency = Settings.PredictionTransparency
+        end
+    end,
+    Cleanup = Cleanup
+}
