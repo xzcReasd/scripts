@@ -8,19 +8,17 @@ local Camera = Workspace.CurrentCamera
 
 -- Настройки
 local Settings = {
-    Keybind = Enum.UserInputType.MouseButton3, -- Изменено на MouseButton3
+    Keybind = Enum.UserInputType.MouseButton3,
     BoostKeybind = Enum.KeyCode.V,
+    TpBackKeybind = Enum.KeyCode.X,
     TargetPart = "HumanoidRootPart",
     LockAngleAtTarget = true,
     -- Настройки предсказания
     UsePrediction = true,
     Prediction = 0.17362,
     JumpOffset = 1.5,
-    -- Настройки BoostToTarget
-    BoostSpeed = 700,
-    MaxBoostDistance = 10000,
-    BoostCooldown = 0,
-    StopDistance = 0,
+    -- Телепорт
+    TeleportDistance = 5,
     -- Визуализация
     PredictionColor = Color3.fromRGB(0, 255, 0),
     PredictionSize = UDim2.new(0, 20, 0, 20),
@@ -45,7 +43,8 @@ local State = {
     IsBoosting = false,
     LastBoostTime = 0,
     FixedBoostPosition = nil,
-    CamlockTarget = nil
+    CamlockTarget = nil,
+    currentPart = nil
 }
 
 -- Создаем визуальные элементы (BillboardGui вместо Part)
@@ -76,6 +75,10 @@ local function ClearVisuals()
         State.PredictionGui:Destroy()
         State.PredictionGui = nil
     end
+    if State.currentPart then
+        State.currentPart:Destroy()
+        State.currentPart = nil
+    end
 end
 
 -- Управление autorotate
@@ -98,25 +101,47 @@ local function CalculateVelocity(target)
     return target[Settings.TargetPart].Velocity
 end
 
--- Находим ближайшего игрока к курсору
-local function FindClosestPlayerToCursor()
-    local closestPlayer = nil
+-- Находим ближайшую цель (игроков или NPC) к курсору
+local function FindClosestTargetToCursor()
+    local closestTarget = nil
     local closestDistance = math.huge
     local mousePos = UserInputService:GetMouseLocation()
     local mouseRay = Camera:ViewportPointToRay(mousePos.X, mousePos.Y)
-    for _, player in pairs(Players:GetPlayers()) do
-        if player == LocalPlayer or not player.Character or not player.Character:FindFirstChild("Head") then continue end
-        local head = player.Character:FindFirstChild("Head")
-        local screenPos, onScreen = Camera:WorldToViewportPoint(head.Position)
-        if onScreen then
-            local screenDistance = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
-            if screenDistance < closestDistance then
-                closestDistance = screenDistance
-                closestPlayer = player
+
+    -- Проверка игроков
+    if Settings.TargetPlayers then
+        for _, player in pairs(Players:GetPlayers()) do
+            if player == LocalPlayer or not player.Character or not player.Character:FindFirstChild("Head") then continue end
+            local head = player.Character:FindFirstChild("Head")
+            local screenPos, onScreen = Camera:WorldToViewportPoint(head.Position)
+            if onScreen then
+                local screenDistance = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+                if screenDistance < closestDistance then
+                    closestDistance = screenDistance
+                    closestTarget = player.Character
+                end
             end
         end
     end
-    return closestPlayer
+
+    -- Проверка NPC
+    if Settings.TargetNPCs then
+        for _, obj in pairs(Workspace:GetChildren()) do
+            if obj ~= LocalPlayer.Character and obj:FindFirstChild(Settings.TargetPart) and not Players:GetPlayerFromCharacter(obj) then
+                local targetPart = obj:FindFirstChild(Settings.TargetPart)
+                local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
+                if onScreen then
+                    local screenDistance = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+                    if screenDistance < closestDistance then
+                        closestDistance = screenDistance
+                        closestTarget = obj
+                    end
+                end
+            end
+        end
+    end
+
+    return closestTarget
 end
 
 -- Рассчитываем предсказанную позицию
@@ -135,68 +160,50 @@ local function CalculatePrediction(target)
     return predictedPos
 end
 
--- Функция быстрого перемещения к цели с использованием CFrame
-local function BoostToTarget()
-    if State.IsBoosting or (tick() - State.LastBoostTime) < Settings.BoostCooldown then return end
+-- Создаем визуальный квадратик над целью
+local function createPartAbovePlayer(target)
+    if target and target:FindFirstChild(Settings.TargetPart) then
+        if State.currentPart then
+            State.currentPart:Destroy()
+        end
+        State.currentPart = Instance.new("Part")
+        State.currentPart.Size = Vector3.new(1, 1, 1)
+        State.currentPart.Material = Enum.Material.Neon
+        State.currentPart.BrickColor = BrickColor.new("Bright green")
+        State.currentPart.Anchored = true
+        State.currentPart.CanCollide = false
+        State.currentPart.Position = target[Settings.TargetPart].Position + Vector3.new(0, 3, 0)
+        State.currentPart.Parent = Workspace
+        game:GetService("Debris"):AddItem(State.currentPart, 5)
+    end
+end
+
+-- Функция телепорта к цели с учетом предсказания
+local function TeleportToTarget()
     if not State.SelectedTarget or not State.SelectedTarget:FindFirstChild(Settings.TargetPart) then return end
     local character = LocalPlayer.Character
     if not character then return end
     local rootPart = character:FindFirstChild("HumanoidRootPart")
     if not rootPart then return end
-    State.FixedBoostPosition = CalculatePrediction(State.SelectedTarget)
-    if not State.FixedBoostPosition then return end
-    local distance = (rootPart.Position - State.FixedBoostPosition).Magnitude
-    if distance > Settings.MaxBoostDistance then
-        State.FixedBoostPosition = rootPart.Position + (State.FixedBoostPosition - rootPart.Position).Unit * Settings.MaxBoostDistance
-    end
-    State.IsBoosting = true
-    State.LastBoostTime = tick()
-    local boostEffect = Instance.new("Part")
-    boostEffect.Size = Vector3.new(5, 5, 5)
-    boostEffect.Shape = Enum.PartType.Ball
-    boostEffect.Material = Enum.Material.Neon
-    boostEffect.Color = Color3.fromRGB(0, 150, 255)
-    boostEffect.Transparency = 0.7
-    boostEffect.Anchored = true
-    boostEffect.CanCollide = false
-    boostEffect.Position = rootPart.Position
-    boostEffect.Parent = Workspace
-    game:GetService("Debris"):AddItem(boostEffect, 0.5)
-    local originalGravity = workspace.Gravity
-    local originalVelocity = rootPart.Velocity
-    workspace.Gravity = 0
-    rootPart.Velocity = Vector3.new()
-    local direction = (State.FixedBoostPosition - rootPart.Position).Unit
-    local targetCFrame = CFrame.new(rootPart.Position, rootPart.Position + direction)
-    local travelDistance = math.min((rootPart.Position - State.FixedBoostPosition).Magnitude - Settings.StopDistance, Settings.MaxBoostDistance)
-    if travelDistance <= 0 then
-        State.IsBoosting = false
-        workspace.Gravity = originalGravity
-        return
-    end
-    local travelTime = travelDistance / Settings.BoostSpeed
-    local startTime = tick()
-    local startPos = rootPart.Position
-    local boostConnection
-    boostConnection = RunService.Heartbeat:Connect(function(dt)
-        if not State.SelectedTarget or not State.SelectedTarget:FindFirstChild(Settings.TargetPart) then
-            State.IsBoosting = false
-            workspace.Gravity = originalGravity
-            boostConnection:Disconnect()
-            return
-        end
-        local elapsed = tick() - startTime
-        local progress = math.min(elapsed / travelTime, 1)
-        local newPos = startPos:Lerp(State.FixedBoostPosition, progress)
-        local newCFrame = CFrame.new(newPos, newPos + direction)
-        rootPart.CFrame = newCFrame
-        boostEffect.Position = newPos
-        if progress >= 1 then
-            State.IsBoosting = false
-            workspace.Gravity = originalGravity
-            boostConnection:Disconnect()
-        end
-    end)
+    local predictedPos = CalculatePrediction(State.SelectedTarget)
+    if not predictedPos then return end
+    local targetPosition = predictedPos - (State.SelectedTarget.HumanoidRootPart.CFrame.LookVector * Settings.TeleportDistance)
+    rootPart.CFrame = CFrame.new(targetPosition, predictedPos)
+    local camera = Workspace.CurrentCamera
+    camera.CFrame = CFrame.new(targetPosition + Vector3.new(0, 2, 0), predictedPos)
+    createPartAbovePlayer(State.SelectedTarget)
+end
+
+-- Функция телепорта назад
+local function TpBack()
+    local character = LocalPlayer.Character
+    if not character or not character:FindFirstChild("HumanoidRootPart") then return end
+    local rootPart = character.HumanoidRootPart
+    local backwardVector = -rootPart.CFrame.LookVector
+    local teleportDistance = 9
+    local currentLookVector = rootPart.CFrame.LookVector
+    local newPosition = rootPart.Position + (backwardVector * teleportDistance)
+    rootPart.CFrame = CFrame.new(newPosition, newPosition + currentLookVector)
 end
 
 -- Функция поворота персонажа к цели
@@ -228,9 +235,9 @@ local function ToggleTarget()
         ManageAutoRotate(true)
         State.CamlockTarget = nil
     else
-        local newTarget = FindClosestPlayerToCursor()
-        if newTarget and newTarget.Character then
-            State.SelectedTarget = newTarget.Character
+        local newTarget = FindClosestTargetToCursor()
+        if newTarget then
+            State.SelectedTarget = newTarget
             State.CamlockTarget = newTarget
         end
     end
@@ -257,10 +264,18 @@ end
 
 -- Логика Camlock
 local function UpdateCamlock()
-    if not Settings.CamlockEnabled or not State.CamlockTarget or not State.CamlockTarget.Character or not State.CamlockTarget.Character:FindFirstChild("Head") then
+    if not Settings.CamlockEnabled or not State.CamlockTarget or not State.CamlockTarget:FindFirstChild("Head") then
         return
     end
-    local targetHead = State.CamlockTarget.Character.Head
+    local targetHead = State.CamlockTarget:FindFirstChild("Head")
+    if not targetHead then
+        local targetPart = State.CamlockTarget:FindFirstChild(Settings.TargetPart)
+        if targetPart then
+            targetHead = targetPart
+        else
+            return
+        end
+    end
     local targetPosition = targetHead.Position
     local currentCFrame = Camera.CFrame
     local targetCFrame = CFrame.new(currentCFrame.Position, targetPosition)
@@ -275,7 +290,9 @@ local function Init()
             if input.UserInputType == Settings.Keybind then
                 ToggleTarget()
             elseif input.KeyCode == Settings.BoostKeybind then
-                BoostToTarget()
+                TeleportToTarget()
+            elseif input.KeyCode == Settings.TpBackKeybind then
+                TpBack()
             elseif input.KeyCode == Settings.CamlockKeybind then
                 Settings.CamlockEnabled = not Settings.CamlockEnabled
             end
@@ -284,6 +301,10 @@ local function Init()
     table.insert(State.Connections, RunService.RenderStepped:Connect(function()
         UpdateVisuals()
         UpdateCamlock()
+        local nearestTarget = FindClosestTargetToCursor()
+        if nearestTarget and nearestTarget ~= State.SelectedTarget then
+            createPartAbovePlayer(nearestTarget)
+        end
     end))
     table.insert(State.Connections, Workspace.ChildRemoved:Connect(function(child)
         if child == State.SelectedTarget then
@@ -291,7 +312,7 @@ local function Init()
             ManageAutoRotate(true)
             State.CamlockTarget = nil
         end
-        if child == State.CamlockTarget and State.CamlockTarget.Character then
+        if child == State.CamlockTarget then
             State.CamlockTarget = nil
         end
     end))
