@@ -1,0 +1,23 @@
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/VaxKs/gfe/main/CustomLinoria"))()
+local ThemeManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/DetainedMonkey2891/ThemeManager/refs/heads/main/Maina"))()
+local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/refs/heads/main/addons/SaveManager.lua"))()
+
+local Window = Library:CreateWindow{
+    Title = "SimpleBot",               -- The title displayed at the top of the window (string, default: "No title")
+    AutoShow = true,                     -- Automatically show the window on creation (boolean, default: false)
+    TabPadding = 1,                       -- Padding between tabs in pixels (number, default: 1, minimum: 1)
+    MenuFadeTime = 0.2,                   -- Duration of the fade animation when toggling the window (number, default: 0.2)
+    ShowCustomCursor = false,              -- Show a custom cursor when the window is open (boolean, default: true)
+    Position = UDim2.fromOffset(175, 50), -- Initial position of the window (UDim2, default: UDim2.fromOffset(175, 50))
+    Size = UDim2.fromOffset(900, 600),    -- Size of the window (UDim2, default: UDim2.fromOffset(550, 600), adjusted for mobile)
+    Center = true,                       -- Center the window on the screen (boolean, default: false)
+    Resizable = false                     -- Allow the window to be resized by dragging (boolean, default: false)
+}
+
+local tabs = {
+    Combat = Window:AddTab('Combat'),
+    Misc = Window:AddTab('Misc'),
+    Visuals = Window:AddTab('Visuals'),
+    Player = Window:AddTab('Player'),
+    Config = Window:AddTab('Config'),
+}
