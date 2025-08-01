@@ -1,23 +1,26 @@
-local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/VaxKs/gfe/main/CustomLinoria"))()
-local ThemeManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/DetainedMonkey2891/ThemeManager/refs/heads/main/Maina"))()
-local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/violin-suzutsuki/LinoriaLib/refs/heads/main/addons/SaveManager.lua"))()
+local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/xzcReasd/scripts/refs/heads/main/Library"))()
+local ThemeManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/xzcReasd/scripts/refs/heads/main/ThemeManager"))()
+local SaveManager  = loadstring(game:HttpGet("https://raw.githubusercontent.com/xzcReasd/scripts/refs/heads/main/SaveManager"))()
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+local Window = Library:CreateWindow({
+    Name = "SimpleBot",
+    Themeable = true,
+    Info = "Generated with Linoria",
+    Center = true,
+    AutoShow = true
+})
 
-local Window = Library:CreateWindow{
-    Title = "SimpleBot",               -- The title displayed at the top of the window (string, default: "No title")
-    AutoShow = true,                     -- Automatically show the window on creation (boolean, default: false)
-    TabPadding = 1,                       -- Padding between tabs in pixels (number, default: 1, minimum: 1)
-    MenuFadeTime = 0.2,                   -- Duration of the fade animation when toggling the window (number, default: 0.2)
-    ShowCustomCursor = false,              -- Show a custom cursor when the window is open (boolean, default: true)
-    Position = UDim2.fromOffset(175, 50), -- Initial position of the window (UDim2, default: UDim2.fromOffset(175, 50))
-    Size = UDim2.fromOffset(900, 600),    -- Size of the window (UDim2, default: UDim2.fromOffset(550, 600), adjusted for mobile)
-    Center = true,                       -- Center the window on the screen (boolean, default: false)
-    Resizable = false                     -- Allow the window to be resized by dragging (boolean, default: false)
-}
-
-local tabs = {
-    Combat = Window:AddTab('Combat'),
-    Misc = Window:AddTab('Misc'),
+local Tabs = {
+    Aimbot  = Window:AddTab('Aimbot'),
+    Misc    = Window:AddTab('Misc'),
+    Player  = Window:AddTab('Player'),
     Visuals = Window:AddTab('Visuals'),
-    Player = Window:AddTab('Player'),
-    Config = Window:AddTab('Config'),
+    Config  = Window:AddTab('Config')
 }
+SaveManager:BuildConfigSection(Tabs.Config)
+local ThemeGroupbox = Tabs.Config:AddLeftGroupbox('Theme Settings')
+ThemeManager:ApplyToGroupbox(ThemeGroupbox)
+ThemeManager:LoadDefault()
+SaveManager:LoadAutoloadConfig()
+
