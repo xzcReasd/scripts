@@ -1,7 +1,16 @@
 local Vars = {
     Lib   = loadstring(game:HttpGet('https://raw.githubusercontent.com/xzcReasd/scripts/refs/heads/main/Library'))(),
     Theme = loadstring(game:HttpGet('https://raw.githubusercontent.com/xzcReasd/scripts/refs/heads/main/ThemeManager'))(),
-    Save  = loadstring(game:HttpGet('https://raw.githubusercontent.com/xzcReasd/scripts/refs/heads/main/SaveManager'))()
+    Save  = loadstring(game:HttpGet('https://raw.githubusercontent.com/xzcReasd/scripts/refs/heads/main/SaveManager'))(),
+    
+    -- Game Services
+    Players = game:GetService("Players"),
+    UserInputService = game:GetService("UserInputService"),
+    RunService = game:GetService("RunService"),
+    
+    -- Game Objects
+    LocalPlayer = game:GetService("Players").LocalPlayer,
+    Camera = workspace.CurrentCamera
 }
 Vars.Theme:SetLibrary(Vars.Lib)
 Vars.Save:SetLibrary(Vars.Lib)
@@ -24,8 +33,320 @@ local Tabs = {
     Visuals = Win:AddTab('Visuals'),
     Config  = Win:AddTab('Config')
 }
+
+-----------------------
+-- AIMBOT TARGETING SYSTEM
+-----------------------
+
+-- Настройки системы
+local Settings = {
+    Enabled = true,
+    StickyKey = Enum.KeyCode.Q,
+    SkipCovered = false, -- Пропускать целей за стеной
+    SkipKnocked = false, -- Пропускать игроков в нокауте
+    SkipGrabbed = false,  -- Пропускать захваченных игроков
+    ResetKnocked = false, -- Сбрасывать цель, если она нокаутирована
+    ResetGrabbed = false, -- Сбрасывать цель, если её схватили
+    ResetDeath   = false  -- Сбрасывать цель при смерти
+}
+
+-- Переменная для хранения текущей цели
+local istarget = nil
+
+-- Функция обновления цели (не сбрасывается при смерти)
+local function update_istarget(target)
+    if not target then
+        istarget = nil
+        return
+    end
+
+    -- Если игрок вышел, но цель не отжата, оставляем её (но character = nil)
+    if not target:IsA("Player") or not target.Character then
+        istarget = {
+            player = target,
+            name = target.Name,
+            displayName = target.DisplayName or target.Name,
+            character = nil,
+            humanoid = nil,
+            root = nil,
+            r15 = nil,
+            position = nil,
+            cframe = nil,
+            velocity = nil,
+            walkspeed = nil,
+            distance = nil,
+            health = nil,
+            maxHealth = nil,
+            team = target.Team or nil,
+            isAlive = false,
+        }
+        return
+    end
+
+    local char = target.Character
+    local root = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChildOfClass("Humanoid")
+
+    -- Если нет root или hum, но цель не отжата, сохраняем данные (но помечаем как мёртвую)
+    if not root or not hum then
+        istarget = {
+            player = target,
+            name = target.Name,
+            displayName = target.DisplayName or target.Name,
+            character = char,
+            humanoid = nil,
+            root = nil,
+            r15 = nil,
+            position = nil,
+            cframe = nil,
+            velocity = nil,
+            walkspeed = nil,
+            distance = nil,
+            health = nil,
+            maxHealth = nil,
+            team = target.Team or nil,
+            isAlive = false,
+        }
+        return
+    end
+
+    local r15parts = {}
+    for _, part in ipairs({"Head", "UpperTorso", "LowerTorso", "LeftUpperArm", "LeftLowerArm", "LeftHand", "RightUpperArm", "RightLowerArm", "RightHand", "LeftUpperLeg", "LeftLowerLeg", "LeftFoot", "RightUpperLeg", "RightLowerLeg", "RightFoot", "HumanoidRootPart"}) do
+        local p = char:FindFirstChild(part)
+        if p then
+            r15parts[part] = p
+        end
+    end
+
+    local lchar = Vars.LocalPlayer.Character
+    local lroot = lchar and lchar:FindFirstChild("HumanoidRootPart")
+    local dist = lroot and (root.Position - lroot.Position).Magnitude or 0
+
+    istarget = {
+        player = target,
+        name = target.Name,
+        displayName = target.DisplayName or target.Name,
+        character = char,
+        humanoid = hum,
+        root = root,
+        r15 = r15parts,
+        position = root.Position,
+        cframe = root.CFrame,
+        velocity = root.Velocity,
+        walkspeed = hum.WalkSpeed,
+        distance = dist,
+        health = hum.Health,
+        maxHealth = hum.MaxHealth,
+        team = target.Team or nil,
+        isAlive = hum.Health > 0,
+    }
+end
+
+-- Функция для поиска ближайшей к курсору цели
+local function isVisible(targetRoot)
+    -- Проверка прямой видимости цели. Возвращает true, если путь свободен
+    if not Settings.SkipCovered then return true end
+
+    local origin = Vars.Camera.CFrame.Position
+    local direction = (targetRoot.Position - origin)
+
+    local params = RaycastParams.new()
+    params.FilterDescendantsInstances = {Vars.LocalPlayer.Character, targetRoot.Parent}
+    params.FilterType = Enum.RaycastFilterType.Blacklist
+
+    local result = workspace:Raycast(origin, direction, params)
+    return result == nil -- nil -> ничто не было поражено, цель видима
+end
+
+-- Проверка состояния K.O / Grabbed
+local function isPlayerKO(player)
+    if not player or not player.Character then return false end
+    local bodyEffects = player.Character:FindFirstChild("BodyEffects")
+    if not bodyEffects then return false end
+    local ko = bodyEffects:FindFirstChild("K.O")
+    local grabbed = bodyEffects:FindFirstChild("Grabbed")
+    return ko and ko.Value and (not grabbed or not grabbed.Value)
+end
+
+local function isPlayerGrabbed(player)
+    if not player or not player.Character then return false end
+    local bodyEffects = player.Character:FindFirstChild("BodyEffects")
+    if not bodyEffects then return false end
+    local grabbed = bodyEffects:FindFirstChild("Grabbed")
+    return grabbed and grabbed.Value
+end
+
+local function getClosestPlayerToCursor()
+    local closestPlayer = nil
+    local shortestDistance = math.huge
+
+    for _, player in ipairs(Vars.Players:GetPlayers()) do
+        if player ~= Vars.LocalPlayer and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            local character = player.Character
+            local rootPart = character.HumanoidRootPart
+            local screenPoint, onScreen = Vars.Camera:WorldToViewportPoint(rootPart.Position)
+
+            if onScreen then
+                local mousePos = Vars.UserInputService:GetMouseLocation()
+                local distance = (Vector2.new(screenPoint.X, screenPoint.Y) - Vector2.new(mousePos.X, mousePos.Y)).Magnitude
+
+                if (not Settings.SkipCovered or isVisible(rootPart))
+                    and (not Settings.SkipKnocked or not isPlayerKO(player))
+                    and (not Settings.SkipGrabbed or not isPlayerGrabbed(player))
+                    and distance < shortestDistance then
+                    shortestDistance = distance
+                    closestPlayer = player
+                end
+            end
+        end
+    end
+
+    return closestPlayer
+end
+
+-- Обработка нажатия клавиши
+local function onInputBegan(input, gameProcessed)
+    if not Settings.Enabled or gameProcessed then return end
+
+    if input.KeyCode == Settings.StickyKey then
+        if istarget then
+            -- Если цель уже есть, сбрасываем её (вручную)
+            istarget = nil
+            print("Цель сброшена (вручную)")
+        else
+            -- Ищем новую цель
+            local closest = getClosestPlayerToCursor()
+            if closest then
+                update_istarget(closest)
+                print("Выбрана цель: " .. closest.Name)
+            else
+                print("Не найдено подходящих целей")
+            end
+        end
+    end
+end
+
+-----------------------
+-- AIMBOT UI
+-----------------------
+
+local TargetingBox = Tabs.Aimbot:AddLeftGroupbox('Targeting')
+
+TargetingBox:AddToggle('AimbotEnabled', {
+    Text = 'Enabled',
+    Default = true,
+    Tooltip = 'Включить/выключить систему захвата цели',
+    Callback = function(Value)
+        Settings.Enabled = Value
+        print('[Aimbot] Targeting ' .. (Value and 'включен' or 'выключен'))
+    end
+})
+
+TargetingBox:AddLabel('Sticky Key'):AddKeyPicker('StickyKeybind', {
+    Default = 'Q',
+    SyncToggleState = false,
+    Text = 'Sticky Target',
+    NoUI = false,
+    Tooltip = 'Клавиша для захвата/сброса цели',
+    ChangedCallback = function(New)
+        -- New приходит строкой типа 'Q' или 'MouseButton1'
+        local kc = Enum.KeyCode[New] or Enum.KeyCode.Unknown
+        if kc ~= Enum.KeyCode.Unknown then
+            Settings.StickyKey = kc
+            print('[Aimbot] Sticky keybind изменен на:', New)
+        else
+            warn('[Aimbot] Некорректный keybind:', New)
+        end
+    end
+})
+
+-----------------------
+-- SKIP SETTINGS UI
+-----------------------
+
+local SkipBox = Tabs.Aimbot:AddRightGroupbox('Skip')
+SkipBox:AddToggle('SkipCovered', {
+    Text = 'Skip Covered',
+    Default = false,
+    Tooltip = 'Пропускать игроков, которые находятся за стеной',
+    Callback = function(v)
+        Settings.SkipCovered = v
+    end
+})
+
+SkipBox:AddToggle('SkipKnocked', {
+    Text = 'Skip Knocked',
+    Default = false,
+    Tooltip = 'Пропускать игроков, которые в нокауте',
+    Callback = function(v)
+        Settings.SkipKnocked = v
+    end
+})
+
+SkipBox:AddToggle('SkipGrabbed', {
+    Text = 'Skip Grabbed',
+    Default = false,
+    Tooltip = 'Пропускать игроков, которых держат',
+    Callback = function(v)
+        Settings.SkipGrabbed = v
+    end
+})
+
+-----------------------
+-- RESET TARGET ON UI
+-----------------------
+
+local ResetBox = Tabs.Aimbot:AddRightGroupbox('ResetTargetON')
+ResetBox:AddToggle('ResetKnocked', {
+    Text = 'Knocked',
+    Default = false,
+    Tooltip = 'Сбрасывать цель, если она нокаутирована',
+    Callback = function(v)
+        Settings.ResetKnocked = v
+    end
+})
+ResetBox:AddToggle('ResetGrabbed', {
+    Text = 'Grabbed',
+    Default = false,
+    Tooltip = 'Сбрасывать цель, если её схватили',
+    Callback = function(v)
+        Settings.ResetGrabbed = v
+    end
+})
+ResetBox:AddToggle('ResetDeath', {
+    Text = 'Death',
+    Default = false,
+    Tooltip = 'Сбрасывать цель при смерти',
+    Callback = function(v)
+        Settings.ResetDeath = v
+    end
+})
+
+-- Функция авто-сброса цели
+local function autoResetTarget()
+    if not istarget or not istarget.player then return end
+    local plr = istarget.player
+    if Settings.ResetKnocked and isPlayerKO(plr) then
+        print('[ResetTarget] Сброс из-за Knocked')
+        istarget = nil; return
+    end
+    if Settings.ResetGrabbed and isPlayerGrabbed(plr) then
+        print('[ResetTarget] Сброс из-за Grabbed')
+        istarget = nil; return
+    end
+    if Settings.ResetDeath and (not plr.Character or not plr.Character:FindFirstChildOfClass('Humanoid') or plr.Character:FindFirstChildOfClass('Humanoid').Health <= 0) then
+        print('[ResetTarget] Сброс из-за Death')
+        istarget = nil; return
+    end
+end
+
+-- Подключаем проверку каждый кадр
+Vars.RunService.RenderStepped:Connect(autoResetTarget)
+
+-- Подключение обработчиков (после создания UI элементов)
+Vars.UserInputService.InputBegan:Connect(onInputBegan)
 Vars.Save:BuildConfigSection(Tabs.Config)
-local ThemeBox = Tabs.Config:AddLeftGroupbox('Theme')
+local ThemeBox = Tabs.Config:AddLeftGroupbox('')
 Vars.Theme:ApplyToGroupbox(ThemeBox)
 Vars.Theme:LoadDefault()
 Vars.Save:LoadAutoloadConfig()
