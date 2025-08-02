@@ -37,7 +37,8 @@ local V = {
     CSyncConnection = nil,
     SavedDesync = nil,
     StrafeCFrame = nil,
-    CSyncHookActive = false
+    CSyncHookActive = false,
+    CSyncVisualization = nil
 }
 
 -- FOLLOW PART INIT (камера всегда следует за FollowPart)
@@ -85,7 +86,9 @@ local Config = {
         SelectedPart = 'HumanoidRootPart',
         CSyncEnabled = false,
     CSyncRange = 10,
-    CSyncHeight = 5
+    CSyncHeight = 5,
+    CSyncVisualize = false,
+    CSyncVisualizeColor = Color3.new(1, 1, 1)
     },
     TargetHighlight = {
         Enabled = false,
@@ -334,6 +337,69 @@ local function StopCSync()
     
     V.SavedDesync = nil
     V.StrafeCFrame = nil
+end
+
+local function CreateCSyncVisualization(position)
+    if not Config.Aimbot.CSyncVisualize then return end
+    
+    local e = Instance.new("BillboardGui")
+    e.Name = "CSyncVis"
+    e.Size = UDim2.new(2, 0, 2, 0)
+    e.AlwaysOnTop = true
+    
+    local img3 = Instance.new("ImageLabel", e)
+    img3.Name = "img3"
+    img3.Size = UDim2.new(0.6, 0, 0.6, 0)
+    img3.BackgroundTransparency = 1
+    img3.Image = "rbxassetid://108770683919433"
+    img3.ImageTransparency = 0
+    img3.ImageColor3 = Config.Aimbot.CSyncVisualizeColor
+    
+    local adorneePart = Instance.new("Part")
+    adorneePart.Size = V.V3(0, 0, 0)
+    adorneePart.Anchored = true
+    adorneePart.Transparency = 1
+    adorneePart.CanCollide = false
+    adorneePart.Position = position
+    adorneePart.Parent = V.WS
+    
+    e.Adornee = adorneePart
+    e.Parent = V.WS
+    
+    return {gui = e, part = adorneePart}
+end
+
+local function UpdateCSyncVisualization()
+    if not Config.Aimbot.CSyncVisualize then
+        if V.CSyncVisualization then
+            if V.CSyncVisualization.gui then V.CSyncVisualization.gui:Destroy() end
+            if V.CSyncVisualization.part then V.CSyncVisualization.part:Destroy() end
+            V.CSyncVisualization = nil
+        end
+        return
+    end
+    
+    -- Показываем визуализацию только если CSync активен и есть позиция десинка
+    if not Config.Aimbot.CSyncEnabled or not V.StrafeCFrame then
+        if V.CSyncVisualization then
+            if V.CSyncVisualization.gui then V.CSyncVisualization.gui:Destroy() end
+            if V.CSyncVisualization.part then V.CSyncVisualization.part:Destroy() end
+            V.CSyncVisualization = nil
+        end
+        return
+    end
+    
+    if not V.CSyncVisualization then
+        V.CSyncVisualization = CreateCSyncVisualization(V.StrafeCFrame.Position)
+    end
+    
+    if V.CSyncVisualization and V.CSyncVisualization.part then
+        -- Обновляем позицию визуализации на координаты CSync десинка
+        V.CSyncVisualization.part.Position = V.StrafeCFrame.Position
+        if V.CSyncVisualization.gui then
+            V.CSyncVisualization.gui.img3.ImageColor3 = Config.Aimbot.CSyncVisualizeColor
+        end
+    end
 end
 
 -----------------------
@@ -636,7 +702,7 @@ CSyncBox:AddSlider('CSyncRange', {
     Text = 'Strafe Range',
     Default = 10,
     Min = 5,
-    Max = 25,
+    Max = 50,
     Rounding = 1,
     Compact = false,
     Tooltip = 'Радиус стрейфа вокруг цели',
@@ -649,12 +715,33 @@ CSyncBox:AddSlider('CSyncHeight', {
     Text = 'Height Variation',
     Default = 5,
     Min = 0,
-    Max = 15,
+    Max = 30,
     Rounding = 1,
     Compact = false,
     Tooltip = 'Вариация высоты стрейфа',
     Callback = function(v)
         Config.Aimbot.CSyncHeight = v or 5
+    end
+})
+
+local CSyncVisToggle = CSyncBox:AddToggle('CSyncVisualize', {
+    Text = 'Visualize',
+    Default = false,
+    Tooltip = 'Визуализация позиции десинка',
+    Callback = function(v)
+        Config.Aimbot.CSyncVisualize = v
+        UpdateCSyncVisualization()
+    end
+})
+
+CSyncVisToggle:AddColorPicker('CSyncVisualizeColor', {
+    Default = Color3.new(1, 1, 1),
+    Title = 'Visualize Color',
+    Callback = function(color)
+        Config.Aimbot.CSyncVisualizeColor = color
+        if V.CSyncVisualization and V.CSyncVisualization.gui then
+            V.CSyncVisualization.gui.img3.ImageColor3 = color
+        end
     end
 })
 
@@ -675,6 +762,7 @@ end
 V.RS.RenderStepped:Connect(function()
     AutoResetTarget()
     UpdateTargetHighlight()
+    UpdateCSyncVisualization()
 end)
 V.UIS.InputBegan:Connect(OnInputBegan)
 V.Save:BuildConfigSection(Tabs.Config)
