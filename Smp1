@@ -3,7 +3,7 @@
 -----------------------
 local V = {
     -- Libraries
-    Lib = loadstring(game:HttpGet('https://raw.githubusercontent.com/xzcReasd/scripts/refs/heads/main/Library'))(),
+    Lib = loadstring(game:HttpGet('https://raw.githubusercontent.com/xzcReasd/scripts/refs/heads/main/LIBFIX'))(),
     Theme = loadstring(game:HttpGet('https://raw.githubusercontent.com/xzcReasd/scripts/refs/heads/main/ThemeManager'))(),
     Save = loadstring(game:HttpGet('https://raw.githubusercontent.com/xzcReasd/scripts/refs/heads/main/SaveManager'))(),
     
@@ -24,7 +24,10 @@ local V = {
     math = math,
     
     -- Current target
-    Target = nil
+    Target = nil,
+    
+    -- Highlight
+    CurrentHighlight = nil
 }
 -- Setup libraries
 V.Theme:SetLibrary(V.Lib)
@@ -61,6 +64,13 @@ local Config = {
         ResetKnocked = false,
         ResetGrabbed = false,
         ResetDeath = false
+    },
+    TargetHighlight = {
+        Enabled = false,
+        OutlineColor = Color3.new(1, 0, 0),
+        FillColor = Color3.new(1, 0, 0),
+        OutlineTransparency = 0,
+        FillTransparency = 0.5
     }
 }
 
@@ -188,6 +198,57 @@ local function GetClosestPlayerToCursor()
 end
 
 -----------------------
+-- TARGET HIGHLIGHT FUNCTIONS
+-----------------------
+
+local function CreateTargetHighlight(character)
+    if not character or not character:FindFirstChild('HumanoidRootPart') then return nil end
+    
+    local highlight = Instance.new('Highlight')
+    highlight.Parent = character
+    highlight.OutlineColor = Config.TargetHighlight.OutlineColor
+    highlight.FillColor = Config.TargetHighlight.FillColor
+    highlight.OutlineTransparency = Config.TargetHighlight.OutlineTransparency
+    highlight.FillTransparency = Config.TargetHighlight.FillTransparency
+    highlight.Adornee = character
+    
+    return highlight
+end
+
+local function UpdateTargetHighlight()
+    if not Config.TargetHighlight.Enabled then
+        if V.CurrentHighlight then
+            V.CurrentHighlight:Destroy()
+            V.CurrentHighlight = nil
+        end
+        return
+    end
+    
+    if V.Target and V.Target.character then
+        -- Если хайлайт уже существует, обновляем его параметры
+        if V.CurrentHighlight and V.CurrentHighlight.Parent == V.Target.character then
+            V.CurrentHighlight.OutlineColor = Config.TargetHighlight.OutlineColor
+            V.CurrentHighlight.FillColor = Config.TargetHighlight.FillColor
+            V.CurrentHighlight.OutlineTransparency = Config.TargetHighlight.OutlineTransparency
+            V.CurrentHighlight.FillTransparency = Config.TargetHighlight.FillTransparency
+        else
+            -- Удаляем старый хайлайт если он есть
+            if V.CurrentHighlight then
+                V.CurrentHighlight:Destroy()
+            end
+            -- Создаем новый хайлайт для новой цели
+            V.CurrentHighlight = CreateTargetHighlight(V.Target.character)
+        end
+    else
+        -- Нет цели - удаляем хайлайт
+        if V.CurrentHighlight then
+            V.CurrentHighlight:Destroy()
+            V.CurrentHighlight = nil
+        end
+    end
+end
+
+-----------------------
 -- AIMBOT SYSTEM
 -----------------------
 local function OnInputBegan(input, gameProcessed)
@@ -303,6 +364,65 @@ ResetBox:AddToggle('ResetDeath', {
     end
 })
 
+-----------------------
+-- VISUALIZATIONS UI
+-----------------------
+
+local VisualizationsBox = Tabs.Aimbot:AddRightGroupbox('Visualizations')
+
+local TargetHighlightToggle = VisualizationsBox:AddToggle('TargetHighlight', {
+    Text = 'Target Highlight',
+    Default = false,
+    Tooltip = 'Подсвечивать выбранную цель',
+    Callback = function(v)
+        Config.TargetHighlight.Enabled = v
+        if not v and V.CurrentHighlight then
+            V.CurrentHighlight:Destroy()
+            V.CurrentHighlight = nil
+        end
+    end
+})
+
+TargetHighlightToggle:AddColorPicker('OutlineColor', {
+    Default = Color3.new(1, 0, 0),
+    Title = 'Outline Color',
+    Callback = function(color)
+        Config.TargetHighlight.OutlineColor = color
+    end
+})
+
+TargetHighlightToggle:AddColorPicker('FillColor', {
+    Default = Color3.new(1, 0, 0),
+    Title = 'Fill Color',
+    Callback = function(color)
+        Config.TargetHighlight.FillColor = color
+    end
+})
+
+VisualizationsBox:AddSlider('OutlineTransparency', {
+    Text = 'Outline Transparency',
+    Default = 0,
+    Min = 0,
+    Max = 1,
+    Rounding = 2,
+    Compact = false,
+    Callback = function(v)
+        Config.TargetHighlight.OutlineTransparency = v
+    end
+})
+
+VisualizationsBox:AddSlider('FillTransparency', {
+    Text = 'Fill Transparency',
+    Default = 0.5,
+    Min = 0,
+    Max = 1,
+    Rounding = 2,
+    Compact = false,
+    Callback = function(v)
+        Config.TargetHighlight.FillTransparency = v
+    end
+})
+
 local function AutoResetTarget()
     if not V.Target or not V.Target.player then return end
     
@@ -317,7 +437,10 @@ end
 -----------------------
 -- CONNECTIONS
 -----------------------
-V.RS.RenderStepped:Connect(AutoResetTarget)
+V.RS.RenderStepped:Connect(function()
+    AutoResetTarget()
+    UpdateTargetHighlight()
+end)
 V.UIS.InputBegan:Connect(OnInputBegan)
 V.Save:BuildConfigSection(Tabs.Config)
 local ThemeBox = Tabs.Config:AddLeftGroupbox('')
