@@ -272,9 +272,9 @@ end
 -- AIMBOT UI
 -----------------------
 
-local TargetingBox = Tabs.Aimbot:AddLeftGroupbox('Targeting')
+V.TargetBox = Tabs.Aimbot:AddLeftGroupbox('Targeting')
 
-TargetingBox:AddToggle('AimbotEnabled', {
+V.TargetBox:AddToggle('AimbotEnabled', {
     Text = 'Enabled',
     Default = true,
     Tooltip = 'Включить/выключить систему захвата цели',
@@ -284,21 +284,14 @@ TargetingBox:AddToggle('AimbotEnabled', {
     end
 })
 
-TargetingBox:AddLabel('Sticky Key'):AddKeyPicker('StickyKeybind', {
+V.TargetBox:AddLabel('Sticky Key'):AddKeyPicker('StickyKeybind', {
     Default = 'Q',
     SyncToggleState = false,
     Text = 'Sticky Target',
     NoUI = false,
     Tooltip = 'Клавиша для захвата/сброса цели',
     ChangedCallback = function(New)
-        -- New приходит строкой типа 'Q' или 'MouseButton1'
-        local kc = Enum.KeyCode[New] or Enum.KeyCode.Unknown
-        if kc ~= Enum.KeyCode.Unknown then
-            Config.Aimbot.StickyKey = kc
-            print('[Aimbot] Sticky keybind изменен на:', New)
-        else
-            warn('[Aimbot] Некорректный keybind:', New)
-        end
+        Config.Aimbot.StickyKey = (function() local kc = Enum.KeyCode[New] or Enum.KeyCode.Unknown; return kc ~= Enum.KeyCode.Unknown and (print('[Aimbot] Sticky keybind изменен на:', New) or kc) or (warn('[Aimbot] Некорректный keybind:', New) or kc) end)()
     end
 })
 
@@ -306,8 +299,8 @@ TargetingBox:AddLabel('Sticky Key'):AddKeyPicker('StickyKeybind', {
 -- SKIP SETTINGS UI
 -----------------------
 
-local SkipBox = Tabs.Aimbot:AddRightGroupbox('Skip')
-SkipBox:AddToggle('SkipCovered', {
+V.SkipBox = Tabs.Aimbot:AddRightGroupbox('Skip')
+V.SkipBox:AddToggle('SkipCovered', {
     Text = 'Skip Covered',
     Default = false,
     Tooltip = 'Пропускать игроков, которые находятся за стеной',
@@ -316,7 +309,7 @@ SkipBox:AddToggle('SkipCovered', {
     end
 })
 
-SkipBox:AddToggle('SkipKnocked', {
+V.SkipBox:AddToggle('SkipKnocked', {
     Text = 'Skip Knocked',
     Default = false,
     Tooltip = 'Пропускать игроков, которые в нокауте',
@@ -325,7 +318,7 @@ SkipBox:AddToggle('SkipKnocked', {
     end
 })
 
-SkipBox:AddToggle('SkipGrabbed', {
+V.SkipBox:AddToggle('SkipGrabbed', {
     Text = 'Skip Grabbed',
     Default = false,
     Tooltip = 'Пропускать игроков, которых держат',
@@ -338,8 +331,8 @@ SkipBox:AddToggle('SkipGrabbed', {
 -- RESET TARGET ON UI
 -----------------------
 
-local ResetBox = Tabs.Aimbot:AddRightGroupbox('ResetTargetON')
-ResetBox:AddToggle('ResetKnocked', {
+V.ResetBox = Tabs.Aimbot:AddRightGroupbox('ResetTargetON')
+V.ResetBox:AddToggle('ResetKnocked', {
     Text = 'Knocked',
     Default = false,
     Tooltip = 'Сбрасывать цель, если она нокаутирована',
@@ -347,7 +340,7 @@ ResetBox:AddToggle('ResetKnocked', {
         Config.Aimbot.ResetKnocked = v
     end
 })
-ResetBox:AddToggle('ResetGrabbed', {
+V.ResetBox:AddToggle('ResetGrabbed', {
     Text = 'Grabbed',
     Default = false,
     Tooltip = 'Сбрасывать цель, если её схватили',
@@ -355,7 +348,7 @@ ResetBox:AddToggle('ResetGrabbed', {
         Config.Aimbot.ResetGrabbed = v
     end
 })
-ResetBox:AddToggle('ResetDeath', {
+V.ResetBox:AddToggle('ResetDeath', {
     Text = 'Death',
     Default = false,
     Tooltip = 'Сбрасывать цель при смерти',
@@ -368,9 +361,9 @@ ResetBox:AddToggle('ResetDeath', {
 -- VISUALIZATIONS UI
 -----------------------
 
-local VisualizationsBox = Tabs.Aimbot:AddRightGroupbox('Visualizations')
+V.VisBox = Tabs.Aimbot:AddRightGroupbox('Visualizations')
 
-local TargetHighlightToggle = VisualizationsBox:AddToggle('TargetHighlight', {
+V.HLToggle = V.VisBox:AddToggle('TargetHighlight', {
     Text = 'Target Highlight',
     Default = false,
     Tooltip = 'Подсвечивать выбранную цель',
@@ -383,7 +376,7 @@ local TargetHighlightToggle = VisualizationsBox:AddToggle('TargetHighlight', {
     end
 })
 
-TargetHighlightToggle:AddColorPicker('OutlineColor', {
+V.HLToggle:AddColorPicker('OutlineColor', {
     Default = Color3.new(1, 0, 0),
     Title = 'Outline Color',
     Callback = function(color)
@@ -391,7 +384,7 @@ TargetHighlightToggle:AddColorPicker('OutlineColor', {
     end
 })
 
-TargetHighlightToggle:AddColorPicker('FillColor', {
+V.HLToggle:AddColorPicker('FillColor', {
     Default = Color3.new(1, 0, 0),
     Title = 'Fill Color',
     Callback = function(color)
@@ -399,7 +392,7 @@ TargetHighlightToggle:AddColorPicker('FillColor', {
     end
 })
 
-VisualizationsBox:AddSlider('OutlineTransparency', {
+V.VisBox:AddSlider('OutlineTransparency', {
     Text = 'Outline Transparency',
     Default = 0,
     Min = 0,
@@ -411,7 +404,7 @@ VisualizationsBox:AddSlider('OutlineTransparency', {
     end
 })
 
-VisualizationsBox:AddSlider('FillTransparency', {
+V.VisBox:AddSlider('FillTransparency', {
     Text = 'Fill Transparency',
     Default = 0.5,
     Min = 0,
@@ -443,7 +436,7 @@ V.RS.RenderStepped:Connect(function()
 end)
 V.UIS.InputBegan:Connect(OnInputBegan)
 V.Save:BuildConfigSection(Tabs.Config)
-local ThemeBox = Tabs.Config:AddLeftGroupbox('')
-V.Theme:ApplyToGroupbox(ThemeBox)
+V.ThemeBox = Tabs.Config:AddLeftGroupbox('')
+V.Theme:ApplyToGroupbox(V.ThemeBox)
 V.Theme:LoadDefault()
 V.Save:LoadAutoloadConfig()
