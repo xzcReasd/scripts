@@ -287,20 +287,34 @@ local function StartCSync()
             return
         end
         
+        -- Дополнительная проверка что clientRoot все еще валиден
+        if not clientRoot.Parent then
+            return
+        end
+        
         -- Сохраняем реальную позицию
         V.SavedDesync = clientRoot.CFrame
         
         -- Генерируем случайную позицию вокруг цели
         V.StrafeCFrame = GetRandomPositionAroundTarget(targetRoot)
         
-        -- Телепорт на стрейф-позицию
-        clientRoot.CFrame = V.StrafeCFrame
+        -- Проверяем что StrafeCFrame валиден
+        if not V.StrafeCFrame then
+            return
+        end
+        
+        -- Телепорт на стрейф-позицию с проверкой
+        if clientRoot and clientRoot.Parent then
+            clientRoot.CFrame = V.StrafeCFrame
+        end
         
         -- Ожидаем кадр
         V.RS.RenderStepped:Wait()
         
-        -- Возвращаемся на реальную позицию
-        clientRoot.CFrame = V.SavedDesync
+        -- Возвращаемся на реальную позицию с проверкой
+        if clientRoot and clientRoot.Parent and V.SavedDesync then
+            clientRoot.CFrame = V.SavedDesync
+        end
     end)
 end
 
@@ -313,7 +327,7 @@ local function StopCSync()
     
     -- Возвращаем игрока на реальную позицию перед остановкой
     local clientRoot = V.LP.Character and V.LP.Character:FindFirstChild("HumanoidRootPart")
-    if clientRoot and V.SavedDesync then
+    if clientRoot and clientRoot.Parent and V.SavedDesync then
         clientRoot.CFrame = V.SavedDesync
         print('[CSync] Позиция игрока восстановлена')
     end
