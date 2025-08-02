@@ -1,26 +1,31 @@
-local Library = loadstring(game:HttpGet("https://raw.githubusercontent.com/xzcReasd/scripts/refs/heads/main/Library"))()
-local ThemeManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/xzcReasd/scripts/refs/heads/main/ThemeManager"))()
-local SaveManager  = loadstring(game:HttpGet("https://raw.githubusercontent.com/xzcReasd/scripts/refs/heads/main/SaveManager"))()
-ThemeManager:SetLibrary(Library)
-SaveManager:SetLibrary(Library)
-local Window = Library:CreateWindow({
-    Name = "SimpleBot",
-    Themeable = true,
-    Info = "Generated with Linoria",
-    Center = true,
-    AutoShow = true
-})
-
-local Tabs = {
-    Aimbot  = Window:AddTab('Aimbot'),
-    Misc    = Window:AddTab('Misc'),
-    Player  = Window:AddTab('Player'),
-    Visuals = Window:AddTab('Visuals'),
-    Config  = Window:AddTab('Config')
+local Vars = {
+    Lib   = loadstring(game:HttpGet('https://raw.githubusercontent.com/xzcReasd/scripts/refs/heads/main/Library'))(),
+    Theme = loadstring(game:HttpGet('https://raw.githubusercontent.com/xzcReasd/scripts/refs/heads/main/ThemeManager'))(),
+    Save  = loadstring(game:HttpGet('https://raw.githubusercontent.com/xzcReasd/scripts/refs/heads/main/SaveManager'))()
 }
-SaveManager:BuildConfigSection(Tabs.Config)
-local ThemeGroupbox = Tabs.Config:AddLeftGroupbox('Theme Settings')
-ThemeManager:ApplyToGroupbox(ThemeGroupbox)
-ThemeManager:LoadDefault()
-SaveManager:LoadAutoloadConfig()
-
+Vars.Theme:SetLibrary(Vars.Lib)
+Vars.Save:SetLibrary(Vars.Lib)
+local function DateTime()
+    local d = os.date('*t')
+    return (`%02d.%02d.%04d`):format(
+        d.day, d.month, d.year)
+end
+local Win = Vars.Lib:CreateWindow({
+    Title     = 'SimpleBot | Really simple | ' .. DateTime(),
+    Themeable = true,
+    Info      = 'SimpleBot',
+    Center    = true,
+    AutoShow  = true
+})
+local Tabs = {
+    Aimbot  = Win:AddTab('Aimbot'),
+    Misc    = Win:AddTab('Misc'),
+    Player  = Win:AddTab('Player'),
+    Visuals = Win:AddTab('Visuals'),
+    Config  = Win:AddTab('Config')
+}
+Vars.Save:BuildConfigSection(Tabs.Config)
+local ThemeBox = Tabs.Config:AddLeftGroupbox('Theme')
+Vars.Theme:ApplyToGroupbox(ThemeBox)
+Vars.Theme:LoadDefault()
+Vars.Save:LoadAutoloadConfig()
